@@ -43,9 +43,9 @@ int init_listener();
 int drop_client(int epfd, struct context *cont);
 void setnonblocking(int sock);
 struct message_node *add_msg_to_queue(struct message_node *message_node_head,
-									  struct message *msg);
+                                      struct message *msg);
 struct context_node *add_context_to_list(struct context_node *context_node_head,
-										 struct context *cont);
+                                         struct context *cont);
 struct message_node *delete_unnecessary_messages(struct message_node *message_node_head);
 
 int main() {
@@ -148,26 +148,26 @@ int main() {
                 if (count == -1 || count == 0) {
                     drop_client(epfd, cont);
                 } else {
-	                msg->data[count] = '\0';
+                    msg->data[count] = '\0';
 
                     printf("recieve: len = %d; msg = [%s]\n", count, msg->data);
                 
                     struct message_node *message_node_tail = add_msg_to_queue(message_node_head, msg);
                     if (message_node_head == NULL){
-                    	message_node_head = message_node_tail;
+                        message_node_head = message_node_tail;
                     }
 
                     struct context_node *ptr_cont = context_node_head;
                     while (ptr_cont != NULL) {
                         if (ptr_cont->data->start_message == NULL) {
-                        	ptr_cont->data->start_message = message_node_tail;
+                            ptr_cont->data->start_message = message_node_tail;
                         }
 
                         struct message_node *msg_node_temp = ptr_cont->data->start_message;
                         while (msg_node_temp != NULL) {
-	                        ++(msg_node_temp->data->receivers);
+                            ++(msg_node_temp->data->receivers);
 
-                        	msg_node_temp = msg_node_temp->next;
+                            msg_node_temp = msg_node_temp->next;
                         }
 
                         ptr_cont = ptr_cont->next;
@@ -180,23 +180,23 @@ int main() {
                 struct message_node *ptr_msg = ptr_cont->data->start_message;
 
                 while (ptr_msg != NULL) {
-                	if (ptr_cont->data->deleted) {
-                		--(ptr_msg->data->receivers);
-                	}
+                    if (ptr_cont->data->deleted) {
+                        --(ptr_msg->data->receivers);
+                    }
 
-                	if (ptr_cont->data->deleted == 0 && 
-                	    ptr_cont->data->writable == 1 && 
-                	    ptr_cont->data->fd != ptr_msg->data->author)
-                	{
-                		//TODO: while ret -1 or ERRNO == EAGAIN
-                	    send(ptr_cont->data->fd, ptr_msg->data->data, strlen(ptr_msg->data->data), 0);                    
-                	    //TODO: break if ret -1 or ERRNO == EAGAIN
+                    if (ptr_cont->data->deleted == 0 && 
+                        ptr_cont->data->writable == 1 && 
+                        ptr_cont->data->fd != ptr_msg->data->author)
+                    {
+                        //TODO: while ret -1 or ERRNO == EAGAIN
+                        send(ptr_cont->data->fd, ptr_msg->data->data, strlen(ptr_msg->data->data), 0);                    
+                        //TODO: break if ret -1 or ERRNO == EAGAIN
 
-                		--(ptr_msg->data->receivers);
-                	}
+                        --(ptr_msg->data->receivers);
+                    }
 
-                	ptr_msg = ptr_msg->next;
-                	ptr_cont->data->start_message = ptr_msg;
+                    ptr_msg = ptr_msg->next;
+                    ptr_cont->data->start_message = ptr_msg;
                 }
 
                 ptr_cont = ptr_cont->next;
@@ -266,47 +266,47 @@ int drop_client(int epfd, struct context *cont){
 }
 
 struct message_node *add_msg_to_queue(struct message_node *message_node_head,
-									  struct message *msg) 
+                                      struct message *msg) 
 {
-	struct message_node * new_message_tail = (struct message_node *) malloc(sizeof(struct message_node));
-	new_message_tail->next = NULL;
-	new_message_tail->data = msg;
+    struct message_node * new_message_tail = (struct message_node *) malloc(sizeof(struct message_node));
+    new_message_tail->next = NULL;
+    new_message_tail->data = msg;
 
-	if (message_node_head == NULL){
-		return new_message_tail;
-	} 
+    if (message_node_head == NULL){
+        return new_message_tail;
+    } 
 
-	struct message_node * now_message_tail = message_node_head;
-	while (now_message_tail->next != NULL) {
-		now_message_tail = now_message_tail->next;
-	}
-	now_message_tail->next = new_message_tail;
+    struct message_node * now_message_tail = message_node_head;
+    while (now_message_tail->next != NULL) {
+        now_message_tail = now_message_tail->next;
+    }
+    now_message_tail->next = new_message_tail;
 
-	return new_message_tail;
+    return new_message_tail;
 }
 
 struct context_node *add_context_to_list(struct context_node *context_node_head,
-										 struct context *cont)
+                                         struct context *cont)
 {
-	struct context_node * new_context_head = (struct context_node *) malloc(sizeof(struct context_node));
-	new_context_head->next = context_node_head;
-	new_context_head->data = cont;
+    struct context_node * new_context_head = (struct context_node *) malloc(sizeof(struct context_node));
+    new_context_head->next = context_node_head;
+    new_context_head->data = cont;
 
-	return new_context_head;
+    return new_context_head;
 }
 
 struct message_node *delete_unnecessary_messages(struct message_node *message_node_head) {
-	if (message_node_head != NULL &&
-		message_node_head->data->receivers == 0)
-	{
-		free(message_node_head->data->data);
-		free(message_node_head->data);
+    if (message_node_head != NULL &&
+        message_node_head->data->receivers == 0)
+    {
+        free(message_node_head->data->data);
+        free(message_node_head->data);
 
-		struct message_node *new_message_node_head = message_node_head->next;
-		free(message_node_head);
+        struct message_node *new_message_node_head = message_node_head->next;
+        free(message_node_head);
 
-		return delete_unnecessary_messages(new_message_node_head);
-	}
+        return delete_unnecessary_messages(new_message_node_head);
+    }
 
-	return message_node_head;
+    return message_node_head;
 }
