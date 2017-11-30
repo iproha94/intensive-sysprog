@@ -15,8 +15,6 @@
 #define MAX_EPOLL_EVENTS 10
 #define WAIT_SEC 2
 #define MAX_LEN_MSG 10
-#define MAX_CONNECTIONS 100
-#define MAX_QUEUE_MSGS 100
 
 struct context {
     int fd;
