@@ -22,6 +22,7 @@ struct context {
     int fd;
     int writable;
     int deleted;
+    struct message_node *start_message;
 };
 
 struct context_node {
@@ -29,20 +30,25 @@ struct context_node {
     struct context_node *next;
 };
 
-struct messages {
+struct message {
     char *data;
     int author;
-    struct context_node *start_client;
+    int receivers;
 };
 
-struct messages_node {
-    struct messages *data;
-    struct messages_node *next;
+struct message_node {
+    struct message *data;
+    struct message_node *next;
 };
 
 int init_listener();
 int drop_client(int epfd, struct context *cont);
 void setnonblocking(int sock);
+struct message_node *add_msg_to_queue(struct message_node *message_node_head,
+									  struct message *msg);
+struct context_node *add_context_to_list(struct context_node *context_node_head,
+										 struct context *cont);
+struct message_node *delete_unnecessary_messages(struct message_node *message_node_head);
 
 int main() {
     int listener;
@@ -64,13 +70,11 @@ int main() {
         exit(1);
     }
 
-    //TODO: реализовать список (новые в начало)
+    //list (new to begin)
     struct context_node *context_node_head = NULL;
 
-    //TODO: реализовать очередь (новые в конец), сейчас реализовано как список,
-    // но это не тру, т.к. начинаем отправлять с головы, но начинать надо с старых.
-    //+ удалять сообщения, где не осталось клиентов - легче
-    struct messages_node *messages_node_head = NULL;
+    //queue (new to end)
+    struct message_node *message_node_head = NULL;
 
     for(;;) {
         int nfds = epoll_wait(epfd, events, MAX_EPOLL_EVENTS, WAIT_SEC * 1000);
@@ -82,7 +86,7 @@ int main() {
                 struct sockaddr_in cliaddr;
                 socklen_t addr_size = sizeof cliaddr;
 
-                //сделать в цикле пока не вернет -1 и errno == EAGAIN
+                //TODO: do accept while ret -1 or errno == EAGAIN
                 int client_socket = accept(listener, (struct sockaddr*) &cliaddr, &addr_size);
                 if (client_socket < 0) {
                     printf("ERROR: accept");
@@ -95,14 +99,15 @@ int main() {
                 
                 struct epoll_event ee;
                 ee.events = EPOLLOUT | EPOLLIN | EPOLLRDHUP | EPOLLET;
+
+                struct context *cont = (struct context *) malloc(sizeof(struct context));
+                cont->fd = client_socket;
+                cont->writable = 0;
+                cont->deleted = 0;
+                cont->start_message = NULL;
+
+                context_node_head = add_context_to_list(context_node_head, cont);
                 
-                struct context_node * old_context_head = context_node_head;
-                context_node_head = (struct context_node *) malloc(sizeof(struct context_node));
-                context_node_head->next = old_context_head;
-                context_node_head->data = malloc(sizeof(struct context));
-                context_node_head->data->fd = client_socket;
-                context_node_head->data->writable = 0;
-                context_node_head->data->deleted = 0;
                 ee.data.ptr = context_node_head->data;
 
                 if (epoll_ctl(epfd, EPOLL_CTL_ADD, client_socket, &ee) == -1) {
@@ -133,47 +138,75 @@ int main() {
             if (events[i].events & EPOLLIN) {
                 printf("%d: EPOLLIN \n", cont->fd);
 
-                struct messages_node * old_messages_head = messages_node_head;
-                messages_node_head = (struct messages_node *) malloc(sizeof(struct messages_node));
-                messages_node_head->next = old_messages_head;
-                messages_node_head->data = malloc(sizeof(struct messages));
+                struct message *msg = (struct message *) malloc(sizeof(struct message));
+                msg->data = (char *) malloc(MAX_LEN_MSG * sizeof(char));
+                msg->author = cont->fd;
+                msg->receivers = 0;
 
-                messages_node_head->data->data = (char *) malloc(MAX_LEN_MSG * sizeof(char));
-                messages_node_head->data->author = cont->fd;
-                messages_node_head->data->start_client = context_node_head;
+                //TODO: while ret -1 or ERRNO == EAGAIN
+                int count = 0;
+                count += recv(cont->fd, msg->data, MAX_LEN_MSG, 0);
 
-                int count = recv(cont->fd, messages_node_head->data->data, MAX_LEN_MSG, 0);
-                messages_node_head->data->data[count] = '\0'; //не уверен что z-строка считана
-
-                if (count == 0) {
+                if (count == -1 || count == 0) {
                     drop_client(epfd, cont);
                 } else {
-                    printf("recieve: len = %d; msg = [%s]\n", count, messages_node_head->data->data);
-                }
-            } 
+	                msg->data[count] = '\0';
 
-            struct messages_node *ptr_msg = messages_node_head;
-            while (ptr_msg != NULL) {
-                struct context_node *ptr_cont = ptr_msg->data->start_client;
-
-                while (ptr_cont != NULL) {
-                    if (ptr_cont->data->deleted == 0 && 
-                        ptr_cont->data->writable == 1 && 
-                        ptr_cont->data->fd != ptr_msg->data->author)
-                    {
-                        send(ptr_cont->data->fd, ptr_msg->data->data, strlen(ptr_msg->data->data), 0);                    
+                    printf("recieve: len = %d; msg = [%s]\n", count, msg->data);
+                
+                    struct message_node *message_node_tail = add_msg_to_queue(message_node_head, msg);
+                    if (message_node_head == NULL){
+                    	message_node_head = message_node_tail;
                     }
 
-                    ptr_cont = ptr_cont->next;
-                    ptr_msg->data->start_client = ptr_cont;
-                } 
+                    struct context_node *ptr_cont = context_node_head;
+                    while (ptr_cont != NULL) {
+                        if (ptr_cont->data->start_message == NULL) {
+                        	ptr_cont->data->start_message = message_node_tail;
+                        }
 
-                ptr_msg = ptr_msg->next;
-            }
+                        struct message_node *msg_node_temp = ptr_cont->data->start_message;
+                        while (msg_node_temp != NULL) {
+	                        ++(msg_node_temp->data->receivers);
 
-            //удалить узлы-сообщений, у сообщения которых кончились адресаты ptr_msg->data->start_client = NULL
-            
-            //удалить узлы-контексты, контексты которых помечены как удаленные, и не используются в качестве головного ноды в сообщениях 
+                        	msg_node_temp = msg_node_temp->next;
+                        }
+
+                        ptr_cont = ptr_cont->next;
+                    } 
+                }                
+            } 
+
+            struct context_node *ptr_cont = context_node_head;
+            while (ptr_cont != NULL) {
+                struct message_node *ptr_msg = ptr_cont->data->start_message;
+
+                while (ptr_msg != NULL) {
+                	if (ptr_cont->data->deleted) {
+                		--(ptr_msg->data->receivers);
+                	}
+
+                	if (ptr_cont->data->deleted == 0 && 
+                	    ptr_cont->data->writable == 1 && 
+                	    ptr_cont->data->fd != ptr_msg->data->author)
+                	{
+                		//TODO: while ret -1 or ERRNO == EAGAIN
+                	    send(ptr_cont->data->fd, ptr_msg->data->data, strlen(ptr_msg->data->data), 0);                    
+                	    //TODO: break if ret -1 or ERRNO == EAGAIN
+
+                		--(ptr_msg->data->receivers);
+                	}
+
+                	ptr_msg = ptr_msg->next;
+                	ptr_cont->data->start_message = ptr_msg;
+                }
+
+                ptr_cont = ptr_cont->next;
+            } 
+
+            message_node_head = delete_unnecessary_messages(message_node_head);
+
+            //TODO: delete contextes, which .deleted != 0 
         }
     }
 
@@ -232,4 +265,50 @@ int drop_client(int epfd, struct context *cont){
     }
 
     return status;
+}
+
+struct message_node *add_msg_to_queue(struct message_node *message_node_head,
+									  struct message *msg) 
+{
+	struct message_node * new_message_tail = (struct message_node *) malloc(sizeof(struct message_node));
+	new_message_tail->next = NULL;
+	new_message_tail->data = msg;
+
+	if (message_node_head == NULL){
+		return new_message_tail;
+	} 
+
+	struct message_node * now_message_tail = message_node_head;
+	while (now_message_tail->next != NULL) {
+		now_message_tail = now_message_tail->next;
+	}
+	now_message_tail->next = new_message_tail;
+
+	return new_message_tail;
+}
+
+struct context_node *add_context_to_list(struct context_node *context_node_head,
+										 struct context *cont)
+{
+	struct context_node * new_context_head = (struct context_node *) malloc(sizeof(struct context_node));
+	new_context_head->next = context_node_head;
+	new_context_head->data = cont;
+
+	return new_context_head;
+}
+
+struct message_node *delete_unnecessary_messages(struct message_node *message_node_head) {
+	if (message_node_head != NULL &&
+		message_node_head->data->receivers == 0)
+	{
+		free(message_node_head->data->data);
+		free(message_node_head->data);
+
+		struct message_node *new_message_node_head = message_node_head->next;
+		free(message_node_head);
+
+		return delete_unnecessary_messages(new_message_node_head);
+	}
+
+	return message_node_head;
 }
